@@ -635,94 +635,95 @@ function load_rules(sinsp_lua_parser,
 	       if verbose then
 		  print("Skipping rule \""..v['rule'].."\" that contains unknown filter "..filter)
 	       end
-	       goto next_rule
+	       break
 	    else
 	       error("Rule \""..v['rule'].."\" contains unknown filter "..filter)
 	    end
 	 end
       end
+	  if v['skip-if-unknown-filter'] then
+		continue
+	  else
+		if (filter_ast.type == "Rule") then
+		state.n_rules = state.n_rules + 1
 
-      if (filter_ast.type == "Rule") then
-	 state.n_rules = state.n_rules + 1
+		state.rules_by_idx[state.n_rules] = v
 
-	 state.rules_by_idx[state.n_rules] = v
+		-- Store the index of this formatter in each relational expression that
+		-- this rule contains.
+		-- This index will eventually be stamped in events passing this rule, and
+		-- we'll use it later to determine which output to display when we get an
+		-- event.
+		mark_relational_nodes(filter_ast.filter.value, state.n_rules)
 
-	 -- Store the index of this formatter in each relational expression that
-	 -- this rule contains.
-	 -- This index will eventually be stamped in events passing this rule, and
-	 -- we'll use it later to determine which output to display when we get an
-	 -- event.
-	 mark_relational_nodes(filter_ast.filter.value, state.n_rules)
+		if (v['tags'] == nil) then
+			v['tags'] = {}
+		end
+		if v['source'] == "syscall" then
+			install_filter(filter_ast.filter.value, filter, sinsp_lua_parser)
+			-- Pass the filter and event types back up
+			falco_rules.add_filter(rules_mgr, v['rule'], evttypes, syscallnums, v['tags'])
 
-	 if (v['tags'] == nil) then
-	    v['tags'] = {}
-	 end
-	 if v['source'] == "syscall" then
-	    install_filter(filter_ast.filter.value, filter, sinsp_lua_parser)
-	    -- Pass the filter and event types back up
-	    falco_rules.add_filter(rules_mgr, v['rule'], evttypes, syscallnums, v['tags'])
+		elseif v['source'] == "k8s_audit" then
+			install_filter(filter_ast.filter.value, k8s_audit_filter, json_lua_parser)
 
-	 elseif v['source'] == "k8s_audit" then
-	    install_filter(filter_ast.filter.value, k8s_audit_filter, json_lua_parser)
+			falco_rules.add_k8s_audit_filter(rules_mgr, v['rule'], v['tags'])
+		end
 
-	    falco_rules.add_k8s_audit_filter(rules_mgr, v['rule'], v['tags'])
-	 end
+		-- Rule ASTs are merged together into one big AST, with "OR" between each
+		-- rule.
+		if (state.filter_ast == nil) then
+			state.filter_ast = filter_ast.filter.value
+		else
+			state.filter_ast = { type = "BinaryBoolOp", operator = "or", left = state.filter_ast, right = filter_ast.filter.value }
+		end
 
-	 -- Rule ASTs are merged together into one big AST, with "OR" between each
-	 -- rule.
-	 if (state.filter_ast == nil) then
-	    state.filter_ast = filter_ast.filter.value
-	 else
-	    state.filter_ast = { type = "BinaryBoolOp", operator = "or", left = state.filter_ast, right = filter_ast.filter.value }
-	 end
+		-- Enable/disable the rule
+		if (v['enabled'] == nil) then
+			v['enabled'] = true
+		end
 
-	 -- Enable/disable the rule
-	 if (v['enabled'] == nil) then
-	    v['enabled'] = true
-	 end
+		if (v['enabled'] == false) then
+			falco_rules.enable_rule(rules_mgr, v['rule'], 0)
+		else
+			falco_rules.enable_rule(rules_mgr, v['rule'], 1)
+		end
 
-	 if (v['enabled'] == false) then
-	    falco_rules.enable_rule(rules_mgr, v['rule'], 0)
-	 else
-	    falco_rules.enable_rule(rules_mgr, v['rule'], 1)
-	 end
+		-- If the format string contains %container.info, replace it
+		-- with extra. Otherwise, add extra onto the end of the format
+		-- string.
+		if v['source'] == "syscall" then
+			if string.find(v['output'], "%container.info", nil, true) ~= nil then
 
-	 -- If the format string contains %container.info, replace it
-	 -- with extra. Otherwise, add extra onto the end of the format
-	 -- string.
-	 if v['source'] == "syscall" then
-	    if string.find(v['output'], "%container.info", nil, true) ~= nil then
+			-- There may not be any extra, or we're not supposed
+			-- to replace it, in which case we use the generic
+			-- "%container.name (id=%container.id)"
+			if replace_container_info == false then
+			v['output'] = string.gsub(v['output'], "%%container.info", "%%container.name (id=%%container.id)")
+			if extra ~= "" then
+				v['output'] = v['output'].." "..extra
+			end
+			else
+			safe_extra = string.gsub(extra, "%%", "%%%%")
+			v['output'] = string.gsub(v['output'], "%%container.info", safe_extra)
+			end
+			else
+			-- Just add the extra to the end
+			if extra ~= "" then
+			v['output'] = v['output'].." "..extra
+			end
+			end
+		end
 
-	       -- There may not be any extra, or we're not supposed
-	       -- to replace it, in which case we use the generic
-	       -- "%container.name (id=%container.id)"
-	       if replace_container_info == false then
-		  v['output'] = string.gsub(v['output'], "%%container.info", "%%container.name (id=%%container.id)")
-		  if extra ~= "" then
-		     v['output'] = v['output'].." "..extra
-		  end
-	       else
-		  safe_extra = string.gsub(extra, "%%", "%%%%")
-		  v['output'] = string.gsub(v['output'], "%%container.info", safe_extra)
-	       end
-	    else
-	       -- Just add the extra to the end
-	       if extra ~= "" then
-		  v['output'] = v['output'].." "..extra
-	       end
-	    end
-	 end
-
-	 -- Ensure that the output field is properly formatted by
-	 -- creating a formatter from it. Any error will be thrown
-	 -- up to the top level.
-	 formatter = formats.formatter(v['source'], v['output'])
-	 formats.free_formatter(v['source'], formatter)
-      else
-	 return false, build_error_with_context(v['context'], "Unexpected type in load_rule: "..filter_ast.type)
-      end
-
-      ::next_rule::
+		-- Ensure that the output field is properly formatted by
+		-- creating a formatter from it. Any error will be thrown
+		-- up to the top level.
+		formatter = formats.formatter(v['source'], v['output'])
+		formats.free_formatter(v['source'], formatter)
+		else
+		return false, build_error_with_context(v['context'], "Unexpected type in load_rule: "..filter_ast.type)
+		end
+	  end  
    end
 
    if verbose then
@@ -834,6 +835,5 @@ function print_stats()
       print ("   "..name..": "..count)
    end
 end
-
 
 
