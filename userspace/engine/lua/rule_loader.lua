@@ -641,9 +641,7 @@ function load_rules(sinsp_lua_parser,
 	    end
 	 end
       end
-	  if v['skip-if-unknown-filter'] then
-		continue
-	  else
+	  if not v['skip-if-unknown-filter'] then
 		if (filter_ast.type == "Rule") then
 		state.n_rules = state.n_rules + 1
 
