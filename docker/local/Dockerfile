@@ -26,6 +26,7 @@ RUN apt-get update \
 	gnupg2 \
 	gcc \
 	jq \
+	libmpx2 \
 	libc6-dev \
 	libelf-dev \
 	llvm-7 \
