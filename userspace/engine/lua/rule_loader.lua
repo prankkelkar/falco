@@ -598,13 +598,13 @@ function load_rules(sinsp_lua_parser,
 	       if verbose then
 		  print("Skipping rule \""..v['rule'].."\" that contains unknown filter "..filter)
 	       end
-	       goto next_rule
+	       break
 	    else
 	       error("Rule \""..v['rule'].."\" contains unknown filter "..filter)
 	    end
 	 end
       end
-
+      if not v['skip-if-unknown-filter'] then
       if (filter_ast.type == "Rule") then
 	 state.n_rules = state.n_rules + 1
 
@@ -685,7 +685,7 @@ function load_rules(sinsp_lua_parser,
 	 return false, build_error_with_context(v['context'], "Unexpected type in load_rule: "..filter_ast.type)
       end
 
-      ::next_rule::
+      end
    end
 
    if verbose then
@@ -797,6 +797,5 @@ function print_stats()
       print ("   "..name..": "..count)
    end
 end
-
 
 
